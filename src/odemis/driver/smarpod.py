@@ -491,7 +491,7 @@ class SA_MCDLL(CDLL):
             # atmcd64d.dll on 64 bits
         else:
             # Global so that its sub-libraries can access it
-            CDLL.__init__(self, "libsmaractmc.so", RTLD_GLOBAL)
+            CDLL.__init__(self, "libsmaractmc.so.0.9.1", RTLD_GLOBAL)
 
     def __getitem__(self, name):
         try:
