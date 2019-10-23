@@ -75,6 +75,7 @@ class PMT(model.Detector):
         # we will fill the set of dependencies with Components later in ._dependencies
         model.Detector.__init__(self, name, role, dependencies=dependencies, **kwargs)
 
+
         if settle_time < 0:
             raise ValueError("Settle time of %g s for '%s' is negative"
                              % (settle_time, name))
@@ -265,6 +266,8 @@ class PMTControl(model.PowerSupplier):
         self._ser_access = threading.Lock()
 
         self._port = self._findDevice(port)  # sets ._serial
+        self._portname = port
+        self._recovering = False
         logging.info("Found PMT Control device on port %s", self._port)
 
         # Get identification of the PMT control device
@@ -420,18 +423,34 @@ class PMTControl(model.PowerSupplier):
         """
         cmd (byte str): command to be sent to PMT Control unit.
         returns (byte str): answer received from the PMT Control unit
-        raises:
-            IOError: if an ERROR is returned by the PMT Control firmware.
         """
         cmd = cmd + b"\n"
         with self._ser_access:
             logging.debug("Sending command %s", to_str_escape(cmd))
-            self._serial.write(cmd)
+            try:
+                self._serial.write(cmd)
+            except IOError:
+                logging.warn("Failed to send command to PMT Control firmware, " +
+                             "trying to reconnect.")
+                if self._recovering:
+                    raise
+                else:
+                    self._tryRecover()
 
             ans = b''
             char = None
             while char != b'\n':
-                char = self._serial.read()
+                try:
+                    char = self._serial.read()
+                except IOError:
+                    logging.warn("Failed to read from PMT Control firmware, " +
+                                 "trying to reconnect.")
+                    if self._recovering:
+                        raise
+                    else:
+                        self._tryRecover()
+                        return
+                    re
                 if not char:
                     logging.error("Timeout after receiving %s", to_str_escape(ans))
                     # TODO: See how you should handle a timeout before you raise
@@ -447,6 +466,36 @@ class PMTControl(model.PowerSupplier):
 
             return ans.rstrip()
 
+    def _tryRecover(self):
+        # no other access to the serial port should be done
+        # so _ser_access should already be acquired
+        self._recovering = True
+        self.state._set_value(HwError("PMTControl disconnected"), force_write=True)
+        self._ser_access.release() # because it will try to write on the port
+        # Retry to open the serial port (in case it was unplugged)
+        while True:
+            try:
+                self._serial.close()
+                self._serial = None
+            except Exception:
+                pass
+            try:
+                logging.debug("retrying to open port %s", self._port)
+                self._port = self._findDevice(self._portname)
+            except IOError:
+                time.sleep(2)
+            except Exception:
+                logging.exception("Unexpected error while trying to recover device")
+                raise
+            else:
+                break
+
+        # it now should be accessible again
+        self.state._set_value(model.ST_RUNNING, force_write=True)
+        
+        self._ser_access.acquire()
+        logging.info("Recovered device on port %s", self._port)
+        self._recovering = False
     @staticmethod
     def _openSerialPort(port):
         """
@@ -499,7 +548,9 @@ class PMTControl(model.PowerSupplier):
                 # If the device has just been inserted, odemis-relay will block
                 # it for 10s while reseting the relay, so be patient
                 try:
+                    logging.error('before flock')
                     fcntl.flock(self._serial.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    logging.error('after flock')
                 except IOError:
                     logging.info("Port %s is busy, will wait and retry", n)
                     time.sleep(11)
