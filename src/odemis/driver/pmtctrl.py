@@ -420,18 +420,26 @@ class PMTControl(model.PowerSupplier):
         """
         cmd (byte str): command to be sent to PMT Control unit.
         returns (byte str): answer received from the PMT Control unit
-        raises:
-            IOError: if an ERROR is returned by the PMT Control firmware.
         """
         cmd = cmd + b"\n"
         with self._ser_access:
             logging.debug("Sending command %s", to_str_escape(cmd))
-            self._serial.write(cmd)
+            try:
+                self._serial.write(cmd)
+            except IOError:
+                logging.warn("Failed to send command to PMT Control firmware, " +
+                             "trying to reconnect.")
+                self._tryRecover()
 
             ans = b''
             char = None
             while char != b'\n':
-                char = self._serial.read()
+                try:
+                    char = self._serial.read()
+                except IOError:
+                    logging.warn("Failed to read from PMT Control firmware, " +
+                                 "trying to reconnect.")
+                    self._tryRecover()
                 if not char:
                     logging.error("Timeout after receiving %s", to_str_escape(ans))
                     # TODO: See how you should handle a timeout before you raise
@@ -446,6 +454,52 @@ class PMTControl(model.PowerSupplier):
                 raise PMTControlError(ans.split(b' ', 1)[1])
 
             return ans.rstrip()
+
+    def _tryRecover(self):
+        # no other access to the serial port should be done
+        # so _ser_access should already be acquired
+
+        self.state._set_value(HwError("PMTControl disconnected"), force_write=True)
+        # Retry to open the serial port (in case it was unplugged)
+        while True:
+            try:
+                self._serial.close()
+                self._serial = None
+            except Exception:
+                pass
+            try:
+                logging.debug("retrying to open port %s", self._port)
+                self._serial = self._openSerialPort(self._port)
+                logging.debug("Sending command *IDN?")
+                self._serial.write(b"*IDN?")
+                ans = b''
+                char = None
+                while char != b'\n':
+                    char = self._serial.read()
+                if not char:
+                    logging.error("Timeout after receiving %s", to_str_escape(ans))
+                    # TODO: See how you should handle a timeout before you raise
+                    # an HWError
+                    raise HwError("PMT Control Unit connection timeout. "
+                                  "Please turn off and on the power to the box.")
+                # Handle ERROR coming from PMT control unit firmware
+                ans += char
+                logging.debug("Received answer %s", to_str_escape(ans))
+                if ans.startswith(b"ERROR"):
+                    raise PMTControlError(ans.split(b' ', 1)[1])
+            except IOError:
+                time.sleep(2)
+            except Exception:
+                logging.exception("Unexpected error while trying to recover device")
+                raise
+            else:
+                break
+
+        # it now should be accessible again
+        self.state._set_value(model.ST_RUNNING, force_write=True)
+        self._ser_access.release() # because it will try to write on the port
+        self._ser_access.acquire()
+        logging.info("Recovered device on port %s", self._port)
 
     @staticmethod
     def _openSerialPort(port):
