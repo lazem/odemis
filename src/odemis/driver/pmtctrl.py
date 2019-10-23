@@ -264,6 +264,7 @@ class PMTControl(model.PowerSupplier):
         # TODO: catch errors and convert to HwError
         self._ser_access = threading.Lock()
 
+        self._portname = port
         self._port = self._findDevice(port)  # sets ._serial
         logging.info("Found PMT Control device on port %s", self._port)
 
@@ -430,6 +431,8 @@ class PMTControl(model.PowerSupplier):
                 logging.warn("Failed to send command to PMT Control firmware, " +
                              "trying to reconnect.")
                 self._tryRecover()
+                
+                return
 
             ans = b''
             char = None
@@ -459,7 +462,7 @@ class PMTControl(model.PowerSupplier):
         # no other access to the serial port should be done
         # so _ser_access should already be acquired
 
-        self.state._set_value(HwError("PMTControl disconnected"), force_write=True)
+        #self.state._set_value(HwError("PMTControl disconnected"), force_write=True)
         # Retry to open the serial port (in case it was unplugged)
         while True:
             try:
@@ -468,35 +471,47 @@ class PMTControl(model.PowerSupplier):
             except Exception:
                 pass
             try:
+                logging.error("trying to find device again")
+                #self._port = self._findDevice(self._portname)
                 logging.debug("retrying to open port %s", self._port)
-                self._serial = self._openSerialPort(self._port)
-                logging.debug("Sending command *IDN?")
-                self._serial.write(b"*IDN?")
-                ans = b''
-                char = None
-                while char != b'\n':
-                    char = self._serial.read()
-                if not char:
-                    logging.error("Timeout after receiving %s", to_str_escape(ans))
-                    # TODO: See how you should handle a timeout before you raise
-                    # an HWError
-                    raise HwError("PMT Control Unit connection timeout. "
-                                  "Please turn off and on the power to the box.")
-                # Handle ERROR coming from PMT control unit firmware
-                ans += char
-                logging.debug("Received answer %s", to_str_escape(ans))
-                if ans.startswith(b"ERROR"):
-                    raise PMTControlError(ans.split(b' ', 1)[1])
+                for n in glob.glob(self._portname):
+                    try:
+                        self._serial = self._openSerialPort(n)
+                        logging.debug("Sending command *IDN?")
+                        self._serial.write(b"*IDN?")
+                        ans = b''
+                        char = None
+                        while char != b'\n':
+                            logging.error('before reading')
+                            char = self._serial.read()
+                            logging.error('after reading %s' % char)
+                            if not char:
+                                logging.error("Timeout after receiving %s", to_str_escape(ans))
+                                # TODO: See how you should handle a timeout before you raise
+                                # an HWError
+                                raise HwError("PMT Control Unit connection timeout. "
+                                              "Please turn off and on the power to the box.")
+                    except HwError:
+                        continue
+                    # Handle ERROR coming from PMT control unit firmware
+                    ans += char
+                    logging.debug("Received answer %s", to_str_escape(ans))
+                    if ans.startswith(b"ERROR"):
+                        raise PMTControlError(ans.split(b' ', 1)[1])
+
             except IOError:
                 time.sleep(2)
+                logging.error('ioerror')
             except Exception:
+                logging.error('escption')
                 logging.exception("Unexpected error while trying to recover device")
                 raise
             else:
+                logging.error('else')
                 break
 
         # it now should be accessible again
-        self.state._set_value(model.ST_RUNNING, force_write=True)
+        #self.state._set_value(model.ST_RUNNING, force_write=True)
         self._ser_access.release() # because it will try to write on the port
         self._ser_access.acquire()
         logging.info("Recovered device on port %s", self._port)
@@ -514,12 +529,15 @@ class PMTControl(model.PowerSupplier):
         )
 
         # Purge
+        logging.error('flushing')
         ser.flush()
         ser.flushInput()
 
         # Try to read until timeout to be extra safe that we properly flushed
         while True:
+            logging.error('reading osp')
             char = ser.read()
+            logging.error('done reading osp')
             if char == b'':
                 break
         logging.debug("Nothing left to read, PMT Control Unit can safely initialize.")
