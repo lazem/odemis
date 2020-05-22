@@ -44,7 +44,6 @@ import copy
 import logging
 import math
 import numpy
-from odemis.model import MD_DESCRIPTION
 
 from odemis.util.filename import guess_pattern, create_filename, update_counter
 
@@ -55,8 +54,7 @@ from odemis.gui.comp.overlay.world import RepetitionSelectOverlay
 from odemis.gui.model import TOOL_ROA, TOOL_RO_ANCHOR, TOOL_NONE
 
 from odemis import dataio, model, util, gui
-from odemis import acq
-from odemis.acq import stream, leech
+from odemis.acq import stream, leech, acqmng
 from odemis.gui.conf import get_acqui_conf
 from odemis.gui.plugin import Plugin, AcquisitionDialog
 from odemis.util import img
@@ -972,7 +970,7 @@ class CLAcqPlugin(Plugin):
         fn_prefix, fn_ext = os.path.splitext(self.filename.value)
 
         try:
-            f = acq.acquire(strs, self.main_app.main_data.settings_obs)
+            f = acqmng.acquire(strs, self.main_app.main_data.settings_obs)
             dlg.showProgress(f)
             das, e = f.result()  # blocks until all the acquisitions are finished
         except CancelledError:
