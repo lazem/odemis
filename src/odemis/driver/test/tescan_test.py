@@ -266,13 +266,17 @@ class TestSEMNoDet(TestSEMBase, unittest.TestCase):
         """
         light = self.light
         orig_pwr = light.power.value[0]
-        new_pwr = int(not orig_pwr)  # 0 or 1
-        light.power.value[0] = new_pwr
-        self.assertEqual(light.power.value[0], new_pwr)
+        if orig_pwr == light.power.range[0]:
+            new_pwr = light.power.range[1]
+        else:
+            new_pwr = light.power.range[0]
+        light.power.value = new_pwr
+        self.assertEqual(light.power.value, new_pwr)
 
         time.sleep(1)
         # Reset
         light.power.value = orig_pwr
+        self.assertEqual(light.power.value, orig_pwr)
 
 
 # @skip("skip")

@@ -1491,7 +1491,7 @@ class Light(model.Emitter):
         model.Emitter.__init__(self, name, role, parent=parent, **kwargs)
 
         self._shape = ()
-        self.power = model.ListContinuous([10., ], (0., 10.), unit="W", cls=(int, long, float),)
+        self.power = model.ListContinuous([10], ((0,), (10,)), unit="W", cls=(int, long, float),)
         # turn on when initializing
         self.parent._device.ChamberLed(1)
         self.power.subscribe(self._updatePower)
@@ -1503,7 +1503,7 @@ class Light(model.Emitter):
     def _updatePower(self, value):
         # Switch the chamber LED based on the power value (On in case of max,
         # off in case of min)
-        if value[0] == self.power.range[1]:
+        if value[0] == self.power.range[1][0]:
             self.parent._device.ChamberLed(1)
         else:
             self.parent._device.ChamberLed(0)
